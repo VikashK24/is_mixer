@@ -82,7 +82,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('IS Collaboration Celebration'),
+        title: const Text('IS Celebration'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         centerTitle: true,
       ),
@@ -104,7 +104,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                   children: [
                     // 1. Heading
                     Text(
-                      'Welcome to the Information Sciences Collaboration Celebration!',
+                      'Welcome to the Information Sciences Mixer 2026!',
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.bold,
