@@ -37,15 +37,15 @@ A Flutter-based web application built for the Information Sciences Mixer 2026. T
 
 ### 📁 Project Architecture
 
-lib/
-├── models/
-│   └── user_model.dart            # Data model for User entity & JSON serialization
-├── screens/
-│   ├── auth_screen.dart           # Login and role registration UI with TabView
-│   └── dashboard_screen.dart      # Game dashboard, admin control panel & anti-cheat guards
-├── services/
-│   └── json_storage_service.dart  # Firestore operations, device locking, and session logic
-└── main.dart                      # Main application entrypoint
+> lib/
+> ├── models/
+> │   └── user_model.dart            # Data model for User entity & JSON serialization
+> ├── screens/
+> │   ├── auth_screen.dart           # Login and role registration UI with TabView
+> │   └── dashboard_screen.dart      # Game dashboard, admin control panel & anti-cheat guards
+> ├── services/
+> │   └── json_storage_service.dart  # Firestore operations, device locking, and session logic
+> └── main.dart                      # Main application entrypoint
 
 ### 🌿 Git & Development Workflow
 
@@ -77,4 +77,4 @@ Push to your feature branch & create a Pull Request:
 
 `git push origin feat/your-feature-name`Open a PR setting base: dev ← compare: feat/your-feature-name.
 
-Once tested and verified on dev, a final PR will be submitted to main.
+Once tested and verified on dev, a final PR will be submitted to `main` branch.
