@@ -24,6 +24,22 @@ A Flutter-based web application built for the Information Sciences Mixer 2026. T
 * [Dart SDK](https://dart.dev/get-dart)
 * Firebase account setup with Firestore enabled.
 
+
+### 📁 Project Architecture
+
+```text
+lib/
+├── models/
+│   └── user_model.dart            # Data model for User entity & JSON serialization
+├── screens/
+│   ├── auth_screen.dart           # Login and role registration UI with TabView
+│   └── dashboard_screen.dart      # Game dashboard, admin control panel & anti-cheat guards
+├── services/
+│   └── json_storage_service.dart  # Firestore operations, device locking, and session logic
+└── main.dart                      # Main application entrypoint
+```
+
+
 ### Quick Start
 
 1. **Clone the repository:**
@@ -35,23 +51,13 @@ A Flutter-based web application built for the Information Sciences Mixer 2026. T
 
    ```
 
-### 📁 Project Architecture
+---
 
-> lib/
-> ├── models/
-> │   └── user_model.dart            # Data model for User entity & JSON serialization
-> ├── screens/
-> │   ├── auth_screen.dart           # Login and role registration UI with TabView
-> │   └── dashboard_screen.dart      # Game dashboard, admin control panel & anti-cheat guards
-> ├── services/
-> │   └── json_storage_service.dart  # Firestore operations, device locking, and session logic
-> └── main.dart                      # Main application entrypoint
-
-### 🌿 Git & Development Workflow
+## 🌿 Git & Development Workflow
 
 We follow a structured branching strategy to maintain stability on main and dev.
 
-#### Branch Structure
+### Branch Structure
 
 **main**: Production branch (Protected via GitHub Ruleset).
 
