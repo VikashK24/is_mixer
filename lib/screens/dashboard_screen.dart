@@ -1,10 +1,15 @@
 import 'dart:async';
-import 'dart:js_interop';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 import 'package:wakelock_plus/wakelock_plus.dart';
+
 import '../models/user_model.dart';
 import '../services/json_storage_service.dart';
+
+import '../widgets/dashboard/user_profile_header.dart';
+import '../widgets/dashboard/identity_allocation_card.dart';
+import '../widgets/dashboard/game_moderator_controls.dart';
+import '../widgets/dashboard/navigatable_management_cards.dart';
 
 class GameDashboardScreen extends StatefulWidget {
   final User user;
@@ -22,36 +27,56 @@ class GameDashboardScreen extends StatefulWidget {
 
 class _GameDashboardScreenState extends State<GameDashboardScreen> {
   bool _isViolated = false;
+  StreamSubscription<web.Event>? _visibilitySub;
+  StreamSubscription<web.Event>? _blurSub;
+
+  final List<String> _moderatorQuestionBank = const [
+    'What is the time complexity of Bubble Sort?',
+    'Which data structure uses LIFO order?',
+    'What is the average time complexity of QuickSort?',
+    'Which algorithm is used to find the shortest path in a graph?',
+    'What is the worst-case space complexity of Merge Sort?',
+    'Which data structure uses FIFO order?',
+    'What is the height of a balanced Binary Search Tree with N nodes?',
+    'What is the space complexity of iterative Binary Search?',
+    'What keyword is used to declare a constant in Dart?',
+    'Which data structure is non-linear?',
+    'What is the worst-case time complexity of Linear Search?',
+    'What algorithm technique does Dynamic Programming rely on?',
+    'What is the worst-case time complexity of inserting into a Hash Table?',
+    'Which traversal prints binary tree nodes in sorted order?',
+    'What is the maximum number of children a binary tree node can have?',
+    'Which data structure is ideal for Breadth-First Search?',
+    'Which data structure is ideal for Depth-First Search?',
+    'What is the primary feature of an immutable object?',
+    'What is the result of 5 ~/ 2 in Dart integer division?',
+    'Which collection type ensures unique elements in Dart?',
+  ];
 
   @override
   void initState() {
     super.initState();
-    
-    // Keep screen awake during game
     WakelockPlus.enable();
 
-    // Enable Anti-Cheat Integrity Guard ONLY for Mafia players
     if (widget.user.role == 'mafia') {
       _enableIntegrityGuard();
     }
   }
 
   void _enableIntegrityGuard() {
-    web.document.addEventListener(
-      'visibilitychange',
-      (web.Event _) {
-        if (web.document.hidden) {
-          _handleIntegrityViolation('Tab switch detected');
-        }
-      }.toJS,
-    );
+    _visibilitySub = const web.EventStreamProvider<web.Event>('visibilitychange')
+        .forTarget(web.document)
+        .listen((_) {
+      if (web.document.hidden) {
+        _handleIntegrityViolation('Tab switch detected');
+      }
+    });
 
-    web.window.addEventListener(
-      'blur',
-      (web.Event _) {
-        _handleIntegrityViolation('Application focus lost');
-      }.toJS,
-    );
+    _blurSub = const web.EventStreamProvider<web.Event>('blur')
+        .forTarget(web.window)
+        .listen((_) {
+      _handleIntegrityViolation('Application focus lost');
+    });
   }
 
   Future<void> _handleIntegrityViolation(String reason) async {
@@ -91,6 +116,8 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
 
   @override
   void dispose() {
+    _visibilitySub?.cancel();
+    _blurSub?.cancel();
     WakelockPlus.disable();
     super.dispose();
   }
@@ -124,150 +151,41 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
               constraints: const BoxConstraints(maxWidth: 750),
               child: Column(
                 children: [
-                  Icon(
-                    isSuperAdmin
-                        ? Icons.admin_panel_settings
-                        : (isModerator ? Icons.security : Icons.sports_esports),
-                    size: 72,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Welcome back, ${widget.user.username}!',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 8),
-                  if (widget.user.role == 'mafia')
-                    const Chip(
-                      avatar: Icon(Icons.shield, color: Colors.green),
-                      label: Text('Anti-Cheat Active: Do not leave or switch tabs!'),
-                    ),
+                  UserProfileHeader(user: widget.user),
                   const SizedBox(height: 24),
 
                   StreamBuilder<List<User>>(
                     stream: JsonStorageService.streamAllUsers(),
                     builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
+                      if (snapshot.connectionState == ConnectionState.waiting &&
+                          !snapshot.hasData) {
                         return const Center(child: CircularProgressIndicator());
                       }
 
                       final allUsers = snapshot.data ?? [];
-                      final moderatorList = allUsers.where((u) => u.role == 'moderator').toList();
-                      final playerList = allUsers.where((u) => u.role == 'mafia').toList();
+                      final moderatorList =
+                          allUsers.where((u) => u.role == 'moderator').toList();
+                      final playerList =
+                          allUsers.where((u) => u.role == 'mafia').toList();
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // SUPER ADMIN SECTION
-                          if (isSuperAdmin) ...[
-                            Text(
-                              'Moderator Approval Queue',
-                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                            ),
-                            const SizedBox(height: 12),
-                            Card(
-                              child: moderatorList.isEmpty
-                                  ? const ListTile(title: Text('No Moderator accounts registered yet.'))
-                                  : ListView.separated(
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      itemCount: moderatorList.length,
-                                      separatorBuilder: (_, __) => const Divider(height: 1),
-                                      itemBuilder: (context, index) {
-                                        final mod = moderatorList[index];
-                                        return ListTile(
-                                          title: Text(mod.username),
-                                          subtitle: Text(
-                                            mod.isApproved
-                                                ? 'Status: Approved'
-                                                : 'Status: Pending Approval',
-                                          ),
-                                          trailing: !mod.isApproved
-                                              ? ElevatedButton.icon(
-                                                  style: ElevatedButton.styleFrom(
-                                                    backgroundColor: Colors.blue,
-                                                    foregroundColor: Colors.white,
-                                                  ),
-                                                  icon: const Icon(Icons.verified_user, size: 16),
-                                                  label: const Text('Grant Approval'),
-                                                  onPressed: () async {
-                                                    await JsonStorageService.approveModerator(mod.id);
-                                                  },
-                                                )
-                                              : const Chip(
-                                                  label: Text('Approved'),
-                                                  backgroundColor: Colors.lightBlueAccent,
-                                                ),
-                                        );
-                                      },
-                                    ),
-                            ),
-                            const SizedBox(height: 32),
-                          ],
-
-                          // MODERATOR / SUPER ADMIN SECTION
                           if (isModerator || isSuperAdmin) ...[
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Player Access Management',
-                                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                ),
-                                TextButton.icon(
-                                  icon: const Icon(Icons.phonelink_erase, size: 18),
-                                  label: const Text('Clear Local Device Lock'),
-                                  onPressed: () async {
-                                    await JsonStorageService.clearDeviceLock();
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Device lock cleared on this browser.'),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                ),
-                              ],
+                            IdentityAllocationCard(playerList: playerList),
+                            const SizedBox(height: 20),
+                            GameModeratorControls(
+                              playerList: playerList,
+                              moderatorQuestionBank: _moderatorQuestionBank,
                             ),
-                            const SizedBox(height: 12),
-                            Card(
-                              child: playerList.isEmpty
-                                  ? const ListTile(title: Text('No Mafia players active.'))
-                                  : ListView.separated(
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      itemCount: playerList.length,
-                                      separatorBuilder: (_, __) => const Divider(height: 1),
-                                      itemBuilder: (context, index) {
-                                        final player = playerList[index];
-                                        return ListTile(
-                                          title: Text(player.username),
-                                          subtitle: Text('Role: ${player.role.toUpperCase()}'),
-                                          trailing: player.isTerminated
-                                              ? ElevatedButton.icon(
-                                                  style: ElevatedButton.styleFrom(
-                                                    backgroundColor: Colors.green,
-                                                    foregroundColor: Colors.white,
-                                                  ),
-                                                  icon: const Icon(Icons.check, size: 16),
-                                                  label: const Text('Re-grant Access'),
-                                                  onPressed: () async {
-                                                    await JsonStorageService.reactivateUser(player.id);
-                                                  },
-                                                )
-                                              : const Chip(
-                                                  label: Text('Active'),
-                                                  backgroundColor: Colors.greenAccent,
-                                                ),
-                                        );
-                                      },
-                                    ),
-                            ),
+                            const SizedBox(height: 24),
+                          ],
+                          if (isSuperAdmin) ...[
+                            ApprovalQueueCardPreview(moderatorList: moderatorList),
+                            const SizedBox(height: 16),
+                          ],
+                          if (isModerator || isSuperAdmin) ...[
+                            PlayerAccessCardPreview(playerList: playerList),
                             const SizedBox(height: 32),
                           ],
                         ],
