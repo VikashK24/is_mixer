@@ -52,7 +52,7 @@ class _AuthScreenState extends State<AuthScreen>
                 borderRadius: BorderRadius.circular(16),
               ),
               child: SizedBox(
-                height: 380, // Fixes the layout constraint crash
+                height: 410, // Height increased to accommodate multi-line error messages nicely
                 child: TabBarView(
                   controller: _tabController,
                   children: [
