@@ -23,15 +23,26 @@ class JsonStorageService {
         id: id,
         username: 'SuperAdmin',
         role: 'superadmin',
+        identity: 'none',
         createdAt: DateTime.now(),
         isApproved: true,
       );
       final json = superAdmin.toJson();
       json['username_lowercase'] = superAdminUsername;
+      json['isLoggedIn'] = false;
       await _usersCol.doc(id).set(json);
     }
   }
 
+  // Stream single user in real-time
+  static Stream<User?> streamUser(String userId) {
+    return _usersCol.doc(userId).snapshots().map((doc) {
+      if (!doc.exists || doc.data() == null) return null;
+      return User.fromJson(doc.data()!);
+    });
+  }
+
+  // Stream all users in real-time
   static Stream<List<User>> streamAllUsers() {
     return _usersCol.snapshots().map((snapshot) {
       return snapshot.docs.map((doc) => User.fromJson(doc.data())).toList();
@@ -51,7 +62,9 @@ class JsonStorageService {
 
     // 1. RETURNING USER
     if (query.docs.isNotEmpty) {
-      final existingUser = User.fromJson(query.docs.first.data());
+      final userDoc = query.docs.first;
+      final userData = userDoc.data();
+      final existingUser = User.fromJson(userData);
 
       if (lockedDeviceId != null &&
           lockedDeviceId != existingUser.id &&
@@ -74,6 +87,17 @@ class JsonStorageService {
         );
       }
 
+      // ⛔ PREVENT MULTI-DEVICE CONCURRENT LOGINS
+      final bool alreadyLoggedIn = userData['isLoggedIn'] ?? false;
+      final String? currentActiveSession = prefs.getString(_sessionKey);
+
+      if (alreadyLoggedIn && currentActiveSession != existingUser.id) {
+        throw Exception(
+          'This account is already logged in on another device. Please log out from that device first.',
+        );
+      }
+
+      await _usersCol.doc(existingUser.id).update({'isLoggedIn': true});
       await prefs.setString(_deviceOwnerKey, existingUser.id);
       await setSession(existingUser.id);
       return existingUser;
@@ -91,20 +115,21 @@ class JsonStorageService {
     }
 
     final newId = _usersCol.doc().id;
-
-    // Moderators require Super Admin approval by default
     final bool requiresApproval = (role == 'moderator');
 
     final newUser = User(
       id: newId,
       username: username.trim(),
       role: role,
+      identity: 'none',
       createdAt: DateTime.now(),
       isApproved: !requiresApproval,
+      isAlive: true,
     );
 
     final userJson = newUser.toJson();
     userJson['username_lowercase'] = normalizedInput;
+    userJson['isLoggedIn'] = !requiresApproval;
 
     await _usersCol.doc(newId).set(userJson);
 
@@ -130,8 +155,22 @@ class JsonStorageService {
   }
 
   static Future<void> softDeleteUser(String userId) async {
-    await _usersCol.doc(userId).update({'isTerminated': true});
-    await clearSession();
+    await _usersCol.doc(userId).update({
+      'isTerminated': true,
+      'isLoggedIn': false,
+    });
+  }
+
+  // GAME ENGINE UPDATES
+  static Future<void> updateUserIdentity({
+    required String userId,
+    required String identity,
+    required bool isAlive,
+  }) async {
+    await _usersCol.doc(userId).update({
+      'identity': identity,
+      'isAlive': isAlive,
+    });
   }
 
   static Future<void> clearDeviceLock() async {
@@ -150,6 +189,7 @@ class JsonStorageService {
 
     final user = User.fromJson(doc.data()!);
     if (user.isTerminated || (user.role == 'moderator' && !user.isApproved)) {
+      await clearSession();
       return null;
     }
     return user;
@@ -162,6 +202,12 @@ class JsonStorageService {
 
   static Future<void> clearSession() async {
     final prefs = await SharedPreferences.getInstance();
+    final activeId = prefs.getString(_sessionKey);
+
+    if (activeId != null) {
+      await _usersCol.doc(activeId).update({'isLoggedIn': false});
+    }
+
     await prefs.remove(_sessionKey);
   }
 }
