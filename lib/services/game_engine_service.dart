@@ -33,21 +33,41 @@ class GameEngineService {
   static final Random _random = Random();
 
   /// 1. DYNAMIC IDENTITY ASSIGNMENT ALGORITHM
+  /// Role distribution:
+  /// - Killers: ~13%
+  /// - Healers: ~30% (Higher proportion for team quiz consensus)
+  /// - Detectives: ~7%
+  /// - Villagers: ~50% (Remaining pool)
   static List<User> assignGameIdentities(List<User> playerUsers) {
     final int total = playerUsers.length;
     if (total < 4) {
       throw ArgumentError('Minimum 4 players required to assign identities.');
     }
 
-    int killerCount = max(1, (total * 0.22).floor());
-    int detectiveCount = total >= 5 ? (total >= 13 ? 2 : 1) : 0;
-    int healerCount = total >= 6 ? (total >= 15 ? 2 : 1) : 0;
-    int villagerCount = total - (killerCount + detectiveCount + healerCount);
+    int killerCount = max(1, (total * 0.13).round());
+    int healerCount = max(1, (total * 0.30).round());
+    int detectiveCount = max(1, (total * 0.07).round());
+
+    // Scale down if role totals exceed eligible players
+    while (killerCount + healerCount + detectiveCount >= total && total > 0) {
+      if (detectiveCount > 1) {
+        detectiveCount--;
+      } else if (healerCount > 1) {
+        healerCount--;
+      } else if (killerCount > 1) {
+        killerCount--;
+      } else {
+        break;
+      }
+    }
+
+    int villagerCount = total - (killerCount + healerCount + detectiveCount);
+    if (villagerCount < 0) villagerCount = 0;
 
     List<String> identityDeck = [
       ...List.generate(killerCount, (_) => 'killer'),
-      ...List.generate(detectiveCount, (_) => 'detective'),
       ...List.generate(healerCount, (_) => 'healer'),
+      ...List.generate(detectiveCount, (_) => 'detective'),
       ...List.generate(villagerCount, (_) => 'villager'),
     ];
 
@@ -64,7 +84,7 @@ class GameEngineService {
   /// 2. SECRET TARGET SELECTION
   static User selectSecretTarget(List<User> activePlayers) {
     final potentialTargets = activePlayers
-        .where((p) => p.isAlive && p.identity != 'killer')
+        .where((p) => p.isAlive && p.identity.toLowerCase() != 'killer')
         .toList();
 
     if (potentialTargets.isEmpty) {
@@ -140,8 +160,8 @@ class GameEngineService {
     }
 
     final message = isSaved
-        ? 'ALERT TO VILLAGERS: ${secretTarget.username} was targeted by the Killer group, but was successfully SAVED by the $savedByRole!'
-        : 'ALERT TO VILLAGERS: The defense team failed to solve the question. ${secretTarget.username} was TERMINATED!';
+        ? 'ALERT TO VILLAGERS: ${secretTarget.username} was targeted by the Killer group, but was successfully SAVED by $savedByRole team consensus!'
+        : 'ALERT TO VILLAGERS: The rescue attempt failed. ${secretTarget.username} was TERMINATED!';
 
     return NightResolution(
       target: isSaved ? secretTarget : secretTarget.copyWith(isAlive: false),

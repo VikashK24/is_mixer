@@ -10,6 +10,9 @@ class JsonStorageService {
   static CollectionReference<Map<String, dynamic>> get _usersCol =>
       _db.collection('users');
 
+  static DocumentReference<Map<String, dynamic>> get _gameStateDoc =>
+      _db.collection('game_state').doc('current');
+
   // Seed Default Super Admin Account into Firestore on Startup
   static Future<void> seedSuperAdmin() async {
     const superAdminUsername = 'superadmin';
@@ -69,9 +72,7 @@ class JsonStorageService {
       if (lockedDeviceId != null &&
           lockedDeviceId != existingUser.id &&
           existingUser.role != 'superadmin') {
-        throw Exception(
-          'This device is locked to another player account.',
-        );
+        throw Exception('This device is locked to another player account.');
       }
 
       if (existingUser.isTerminated) {
@@ -87,7 +88,7 @@ class JsonStorageService {
         );
       }
 
-      // ⛔ PREVENT MULTI-DEVICE CONCURRENT LOGINS
+      // PREVENT MULTI-DEVICE CONCURRENT LOGINS
       final bool alreadyLoggedIn = userData['isLoggedIn'] ?? false;
       final String? currentActiveSession = prefs.getString(_sessionKey);
 
@@ -109,9 +110,7 @@ class JsonStorageService {
       final String ownerName = ownerDoc.exists && ownerDoc.data() != null
           ? (ownerDoc.data()!['username'] ?? 'another account')
           : 'another account';
-      throw Exception(
-        'This device is already registered to "$ownerName".',
-      );
+      throw Exception('This device is already registered to "$ownerName".');
     }
 
     final newId = _usersCol.doc().id;
@@ -147,6 +146,29 @@ class JsonStorageService {
   // SUPER ADMIN ACTIONS
   static Future<void> approveModerator(String userId) async {
     await _usersCol.doc(userId).update({'isApproved': true});
+  }
+
+  /// SUPER ADMIN EXCLUSIVE: Clears all user data except active Super Admin & Question Bank
+  static Future<void> clearAllUserDataExceptQuestions(String currentSuperAdminId) async {
+    final batch = _db.batch();
+
+    // 1. Fetch and delete all users EXCEPT current Super Admin
+    final usersSnapshot = await _usersCol.get();
+    for (final doc in usersSnapshot.docs) {
+      if (doc.id != currentSuperAdminId) {
+        batch.delete(doc.reference);
+      }
+    }
+
+    // 2. Reset game state document
+    batch.set(_gameStateDoc, {
+      'phase': 'idle',
+      'round': 1,
+      'activeQuestion': null,
+      'announcement': 'Game has been reset by Super Admin.',
+    });
+
+    await batch.commit();
   }
 
   // MODERATOR ACTIONS
@@ -209,5 +231,37 @@ class JsonStorageService {
     }
 
     await prefs.remove(_sessionKey);
+  }
+
+  // GAME STATE MANAGEMENT & REAL-TIME STREAMS
+  static Stream<Map<String, dynamic>> streamGameState() {
+    return _gameStateDoc.snapshots().map((doc) {
+      if (!doc.exists || doc.data() == null) {
+        return {
+          'phase': 'idle',
+          'round': 1,
+          'activeQuestion': null,
+          'announcement': 'Game is starting. Standby for moderator prompts.',
+        };
+      }
+      return doc.data()!;
+    });
+  }
+
+  static Future<void> updateGameState(Map<String, dynamic> newState) async {
+    await _gameStateDoc.set(newState, SetOptions(merge: true));
+  }
+
+  static Future<Map<String, dynamic>> getGameState() async {
+    final snapshot = await _gameStateDoc.get();
+    if (snapshot.exists && snapshot.data() != null) {
+      return snapshot.data()!;
+    }
+    return {
+      'phase': 'idle',
+      'round': 1,
+      'activeQuestion': null,
+      'announcement': 'Game is starting. Standby for moderator prompts.',
+    };
   }
 }
