@@ -1,15 +1,21 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:web/web.dart' as web;
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:web/web.dart' as web;
 
 import '../models/user_model.dart';
 import '../services/json_storage_service.dart';
 
-import '../widgets/dashboard/user_profile_header.dart';
-import '../widgets/dashboard/identity_allocation_card.dart';
 import '../widgets/dashboard/game_moderator_controls.dart';
+import '../widgets/dashboard/identity_allocation_card.dart';
 import '../widgets/dashboard/navigatable_management_cards.dart';
+import '../widgets/dashboard/user_profile_header.dart';
+
+// Player Dashboard Components
+import '../widgets/dashboard/phase_banner.dart';
+import '../widgets/dashboard/player_status_grid.dart';
+import '../widgets/dashboard/role_action_card.dart';
 
 class GameDashboardScreen extends StatefulWidget {
   final User user;
@@ -30,27 +36,39 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
   StreamSubscription<web.Event>? _visibilitySub;
   StreamSubscription<web.Event>? _blurSub;
 
-  final List<String> _moderatorQuestionBank = const [
-    'What is the time complexity of Bubble Sort?',
-    'Which data structure uses LIFO order?',
-    'What is the average time complexity of QuickSort?',
-    'Which algorithm is used to find the shortest path in a graph?',
-    'What is the worst-case space complexity of Merge Sort?',
-    'Which data structure uses FIFO order?',
-    'What is the height of a balanced Binary Search Tree with N nodes?',
-    'What is the space complexity of iterative Binary Search?',
-    'What keyword is used to declare a constant in Dart?',
-    'Which data structure is non-linear?',
-    'What is the worst-case time complexity of Linear Search?',
-    'What algorithm technique does Dynamic Programming rely on?',
-    'What is the worst-case time complexity of inserting into a Hash Table?',
-    'Which traversal prints binary tree nodes in sorted order?',
-    'What is the maximum number of children a binary tree node can have?',
-    'Which data structure is ideal for Breadth-First Search?',
-    'Which data structure is ideal for Depth-First Search?',
-    'What is the primary feature of an immutable object?',
-    'What is the result of 5 ~/ 2 in Dart integer division?',
-    'Which collection type ensures unique elements in Dart?',
+  // Standard MCQ Question Bank
+  static const List<Map<String, dynamic>> _defaultModeratorQuestionBank = [
+    {
+      'id': 'mcq_1',
+      'question': 'What is the time complexity of Bubble Sort?',
+      'options': ['O(N)', 'O(N log N)', 'O(N^2)', 'O(1)'],
+      'correctAnswer': 'O(N^2)',
+    },
+    {
+      'id': 'mcq_2',
+      'question': 'Which data structure uses LIFO order?',
+      'options': ['Queue', 'Stack', 'Array', 'Linked List'],
+      'correctAnswer': 'Stack',
+    },
+    {
+      'id': 'mcq_3',
+      'question': 'What is the average time complexity of QuickSort?',
+      'options': ['O(N)', 'O(N log N)', 'O(N^2)', 'O(log N)'],
+      'correctAnswer': 'O(N log N)',
+    },
+    {
+      'id': 'mcq_4',
+      'question':
+          'Which algorithm is used to find the shortest path in a graph?',
+      'options': ['Dijkstra', 'Kruskal', 'Prim', 'BFS'],
+      'correctAnswer': 'Dijkstra',
+    },
+    {
+      'id': 'mcq_5',
+      'question': 'What keyword is used to declare a constant in Dart?',
+      'options': ['var', 'let', 'const', 'final'],
+      'correctAnswer': 'const',
+    },
   ];
 
   @override
@@ -64,19 +82,20 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
   }
 
   void _enableIntegrityGuard() {
-    _visibilitySub = const web.EventStreamProvider<web.Event>('visibilitychange')
-        .forTarget(web.document)
-        .listen((_) {
-      if (web.document.hidden) {
-        _handleIntegrityViolation('Tab switch detected');
-      }
-    });
+    _visibilitySub =
+        const web.EventStreamProvider<web.Event>(
+          'visibilitychange',
+        ).forTarget(web.document).listen((_) {
+          if (web.document.hidden) {
+            _handleIntegrityViolation('Tab switch detected');
+          }
+        });
 
     _blurSub = const web.EventStreamProvider<web.Event>('blur')
         .forTarget(web.window)
         .listen((_) {
-      _handleIntegrityViolation('Application focus lost');
-    });
+          _handleIntegrityViolation('Application focus lost');
+        });
   }
 
   Future<void> _handleIntegrityViolation(String reason) async {
@@ -98,7 +117,7 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
             ],
           ),
           content: Text(
-            'Game Integrity Triggered ($reason).\n\nSwitching to other apps or tabs during an active game is prohibited. Your account has been terminated. Please contact a Moderator to regain access.',
+            'Game Integrity Triggered ($reason).\n\nSwitching to other apps or tabs during an active game is prohibited. Your account has been terminated and logged out. Please contact a Moderator to regain access.',
           ),
           actions: [
             ElevatedButton(
@@ -107,7 +126,7 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
                 widget.onLogout();
               },
               child: const Text('OK'),
-            )
+            ),
           ],
         ),
       );
@@ -126,6 +145,7 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
   Widget build(BuildContext context) {
     final isSuperAdmin = widget.user.role == 'superadmin';
     final isModerator = widget.user.role == 'moderator';
+    final isPlayer = widget.user.role == 'mafia';
 
     return PopScope(
       canPop: false,
@@ -141,78 +161,95 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
                 await JsonStorageService.clearSession();
                 widget.onLogout();
               },
-            )
+            ),
           ],
         ),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 750),
-              child: Column(
-                children: [
-                  UserProfileHeader(user: widget.user),
-                  const SizedBox(height: 24),
+        body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('game_state')
+              .doc('question_bank')
+              .snapshots(),
+          builder: (context, qbSnapshot) {
+            List<Map<String, dynamic>> activeQuestionBank =
+                _defaultModeratorQuestionBank;
 
-                  StreamBuilder<List<User>>(
-                    stream: JsonStorageService.streamAllUsers(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting &&
-                          !snapshot.hasData) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
+            if (qbSnapshot.hasData && qbSnapshot.data?.data() != null) {
+              final rawQuestions =
+                  qbSnapshot.data!.data()!['questions'] as List?;
+              if (rawQuestions != null && rawQuestions.isNotEmpty) {
+                activeQuestionBank = rawQuestions
+                    .map((q) => Map<String, dynamic>.from(q as Map))
+                    .toList();
+              }
+            }
 
-                      final allUsers = snapshot.data ?? [];
-                      final moderatorList =
-                          allUsers.where((u) => u.role == 'moderator').toList();
-                      final playerList =
-                          allUsers.where((u) => u.role == 'mafia').toList();
+            return StreamBuilder<List<User>>(
+              stream: JsonStorageService.streamAllUsers(),
+              builder: (context, snapshot) {
+                final allUsers = snapshot.data ?? [];
+                final moderatorList = allUsers
+                    .where((u) => u.role == 'moderator')
+                    .toList();
+                final playerList = allUsers
+                    .where((u) => u.role == 'mafia')
+                    .toList();
 
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 750),
+                      child: Column(
                         children: [
+                          UserProfileHeader(user: widget.user),
+                          const SizedBox(height: 24),
+
+                          // PLAYER EXCLUSIVE DASHBOARD PANELS
+                          if (isPlayer) ...[
+                            const PhaseBanner(),
+                            const SizedBox(height: 20),
+                            RoleActionCard(currentUser: widget.user),
+                            const SizedBox(height: 20),
+                            PlayerStatusGrid(currentUser: widget.user),
+                            const SizedBox(height: 24),
+                          ],
+
+                          // MODERATOR & ADMIN CONTROL PANELS
                           if (isModerator || isSuperAdmin) ...[
                             IdentityAllocationCard(playerList: playerList),
                             const SizedBox(height: 20),
                             GameModeratorControls(
                               playerList: playerList,
-                              moderatorQuestionBank: _moderatorQuestionBank,
+                              moderatorQuestionBank: activeQuestionBank,
                             ),
                             const SizedBox(height: 24),
                           ],
+
+                          // SUPER ADMIN EXCLUSIVE MANAGEMENTS
                           if (isSuperAdmin) ...[
-                            ApprovalQueueCardPreview(moderatorList: moderatorList),
+                            ApprovalQueueCardPreview(
+                              moderatorList: moderatorList,
+                            ),
+                            const SizedBox(height: 16),
+                            SuperAdminDangerZoneCard(
+                              currentUser: widget.user,
+                            ),
                             const SizedBox(height: 16),
                           ],
+
+                          // PLAYER ACCESS MANAGEMENT (BOTH MODERATOR & SUPER ADMIN)
                           if (isModerator || isSuperAdmin) ...[
                             PlayerAccessCardPreview(playerList: playerList),
                             const SizedBox(height: 32),
                           ],
                         ],
-                      );
-                    },
-                  ),
-
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade600,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
                       ),
                     ),
-                    icon: const Icon(Icons.delete_forever),
-                    label: const Text('Terminate Account (Soft Delete)'),
-                    onPressed: () async {
-                      await JsonStorageService.softDeleteUser(widget.user.id);
-                      widget.onLogout();
-                    },
                   ),
-                ],
-              ),
-            ),
-          ),
+                );
+              },
+            );
+          },
         ),
       ),
     );
