@@ -47,7 +47,7 @@ class _RoleActionCardState extends State<RoleActionCard> {
       final identity = widget.currentUser.identity.toLowerCase();
 
       if (identity == 'detective') {
-        final isKiller = targetUser.identity.toLowerCase() == 'killer';
+        final isKiller = targetUser.identity.toLowerCase() == 'killer' || targetUser.role.toLowerCase() == 'killer';
         setState(() {
           _isTargetKiller = isKiller;
           _actionFeedback = 'Investigation Complete for ${targetUser.username}:';
@@ -79,96 +79,79 @@ class _RoleActionCardState extends State<RoleActionCard> {
         final String phase = (gameState['phase'] ?? 'idle').toString();
         final identity = widget.currentUser.identity.toLowerCase();
 
-        // 1. HEALER ROLE
-        if (identity == 'healer') {
-          if (phase == 'healerPhase') {
-            return HealerActionCard(currentUser: widget.currentUser);
-          }
-          return Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: const Padding(
-              padding: EdgeInsets.all(20.0),
-              child: Center(
-                child: Text(
-                  'Healer Phase is currently inactive. Please wait for the moderator.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey),
-                ),
-              ),
-            ),
-          );
-        }
-
-        // 2. KILLER ROLE
-        if (identity == 'killer') {
-          if (phase == 'killerPhase') {
-            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance.collection('users').snapshots(),
-              builder: (context, usersSnap) {
-                final userDocs = usersSnap.data?.docs ?? [];
-                final List<User> allUsers = userDocs
-                    .map((doc) => User.fromJson(doc.data()))
-                    .toList();
-
-                return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                  stream: FirebaseFirestore.instance
-                      .collection('game_state')
-                      .doc('question_bank')
-                      .snapshots(),
-                  builder: (context, bankSnap) {
-                    final bankData = bankSnap.data?.data()?['questions'] as List?;
-                    final List<Map<String, dynamic>> questionBank = bankData != null
-                        ? List<Map<String, dynamic>>.from(bankData)
-                        : [];
-
-                    return KillerActionCard(
-                      currentUser: widget.currentUser,
-                      players: allUsers,
-                      questionBank: questionBank,
-                    );
-                  },
-                );
-              },
-            );
-          }
-          return Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            child: const Padding(
-              padding: EdgeInsets.all(20.0),
-              child: Center(
-                child: Text(
-                  'Killer Phase is currently inactive. Please wait for nightfall.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey),
-                ),
-              ),
-            ),
-          );
-        }
-
-        // 3. DETECTIVE ROLE
-        bool isRoleActiveInPhase = false;
-        if (identity == 'detective' && phase == 'detectivePhase') {
-          isRoleActiveInPhase = true;
-        }
-
-        if (!isRoleActiveInPhase) {
-          return const SizedBox.shrink();
-        }
-
+        // STREAM ALL USERS FOR ROLE CARDS
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance.collection('users').snapshots(),
-          builder: (context, userSnapshot) {
-            final userDocs = userSnapshot.data?.docs ?? [];
+          builder: (context, usersSnap) {
+            final userDocs = usersSnap.data?.docs ?? [];
             final List<User> allUsers = userDocs
                 .map((doc) => User.fromJson(doc.data()))
                 .toList();
 
-            final eligibleTargets = allUsers
-                .where((u) => u.id != widget.currentUser.id && (u.isAlive ?? false) && u.role == 'mafia')
-                .toList();
+            // 1. HEALER ROLE
+            if (identity == 'healer') {
+              if (phase == 'healerPhase') {
+                return HealerActionCard(
+                  currentUser: widget.currentUser,
+                  players: allUsers,
+                );
+              }
+              return Card(
+                elevation: 2,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: const Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: Center(
+                    child: Text(
+                      'Healer Phase is currently inactive. Please wait for the moderator.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            // 2. KILLER ROLE
+            if (identity == 'killer') {
+              if (phase == 'killerPhase') {
+                return KillerActionCard(
+                  currentUser: widget.currentUser,
+                  players: allUsers,
+                );
+              }
+              return Card(
+                elevation: 2,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: const Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: Center(
+                    child: Text(
+                      'Killer Phase is currently inactive. Please wait for nightfall.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            // 3. DETECTIVE ROLE
+            bool isRoleActiveInPhase = false;
+            if (identity == 'detective' && phase == 'detectivePhase') {
+              isRoleActiveInPhase = true;
+            }
+
+            if (!isRoleActiveInPhase) {
+              return const SizedBox.shrink();
+            }
+
+            // Filter targets for detective: exclude self and dead players
+            final eligibleTargets = allUsers.where((u) {
+              final isSelf = u.id == widget.currentUser.id;
+              final isTerminated = u.isTerminated || !(u.isAlive ?? true);
+              return !isSelf && !isTerminated;
+            }).toList();
 
             final Color primaryColor = Colors.indigo.shade800;
             const IconData icon = Icons.search;
@@ -216,13 +199,13 @@ class _RoleActionCardState extends State<RoleActionCard> {
                     DropdownButtonFormField<String>(
                       value: _selectedPlayerId,
                       decoration: const InputDecoration(
-                        labelText: 'Select Target Player',
+                        labelText: 'Select Target Player to Investigate',
                         border: OutlineInputBorder(),
                       ),
                       items: eligibleTargets.map((u) {
                         return DropdownMenuItem<String>(
                           value: u.id,
-                          child: Text('${u.username} (${u.identity.toUpperCase()})'),
+                          child: Text(u.username),
                         );
                       }).toList(),
                       onChanged: (val) {
@@ -264,7 +247,7 @@ class _RoleActionCardState extends State<RoleActionCard> {
                             if (_isTargetKiller != null) ...[
                               const SizedBox(height: 4),
                               Text(
-                                _isTargetKiller! ? 'TARGET IS A KILLER!' : 'TARGET IS NOT A KILLER',
+                                _isTargetKiller! ? 'TARGET IS A KILLER! 🔪' : 'TARGET IS NOT A KILLER 🛡️',
                                 style: TextStyle(
                                   color: _isTargetKiller! ? Colors.red.shade900 : Colors.green.shade900,
                                   fontWeight: FontWeight.bold,
@@ -292,7 +275,7 @@ class _RoleActionCardState extends State<RoleActionCard> {
                               child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                             )
                           : Icon(icon),
-                      label: Text(_isProcessing ? 'Executing...' : 'Submit Action'),
+                      label: Text(_isProcessing ? 'Investigating...' : 'Investigate Player'),
                     ),
                   ],
                 ),
