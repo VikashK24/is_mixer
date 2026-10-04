@@ -13,9 +13,13 @@ import '../widgets/dashboard/navigatable_management_cards.dart';
 import '../widgets/dashboard/user_profile_header.dart';
 
 // Player Dashboard Components
+import '../widgets/dashboard/healer_action_card.dart';
+import '../widgets/dashboard/killer_action_card.dart';
 import '../widgets/dashboard/phase_banner.dart';
 import '../widgets/dashboard/player_status_grid.dart';
+import '../widgets/dashboard/quiz_card.dart';
 import '../widgets/dashboard/role_action_card.dart';
+import '../widgets/dashboard/villager_action_card.dart';
 
 class GameDashboardScreen extends StatefulWidget {
   final User user;
@@ -194,6 +198,14 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
                     .where((u) => u.role == 'mafia')
                     .toList();
 
+                // Fetch latest state for current user
+                final currentUser = playerList.firstWhere(
+                  (u) => u.id == widget.user.id,
+                  orElse: () => widget.user,
+                );
+
+                final String identity = currentUser.identity.toLowerCase();
+
                 return SingleChildScrollView(
                   padding: const EdgeInsets.all(24.0),
                   child: Center(
@@ -201,16 +213,39 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
                       constraints: const BoxConstraints(maxWidth: 750),
                       child: Column(
                         children: [
-                          UserProfileHeader(user: widget.user),
+                          UserProfileHeader(user: currentUser),
                           const SizedBox(height: 24),
 
                           // PLAYER EXCLUSIVE DASHBOARD PANELS
                           if (isPlayer) ...[
                             const PhaseBanner(),
                             const SizedBox(height: 20),
-                            RoleActionCard(currentUser: widget.user),
+
+                            // Identity/Role-Based Action Card Routing
+                            if (identity == 'killer') ...[
+                              KillerActionCard(
+                                currentUser: currentUser,
+                                players: playerList,
+                              ),
+                            ] else if (identity == 'healer') ...[
+                              HealerActionCard(
+                                currentUser: currentUser,
+                                players: playerList,
+                              ),
+                            ] else if (identity == 'villager') ...[
+                              VillagerActionCard(
+                                currentUser: currentUser,
+                                players: playerList,
+                              ),
+                            ] else ...[
+                              // Fallback card if identity isn't assigned yet
+                              RoleActionCard(currentUser: currentUser),
+                            ],
+
                             const SizedBox(height: 20),
-                            PlayerStatusGrid(currentUser: widget.user),
+                            QuizCard(currentUser: currentUser),
+                            const SizedBox(height: 20),
+                            PlayerStatusGrid(currentUser: currentUser),
                             const SizedBox(height: 24),
                           ],
 
@@ -232,7 +267,7 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
                             ),
                             const SizedBox(height: 16),
                             SuperAdminDangerZoneCard(
-                              currentUser: widget.user,
+                              currentUser: currentUser,
                             ),
                             const SizedBox(height: 16),
                           ],

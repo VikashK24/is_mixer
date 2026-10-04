@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../../services/json_storage_service.dart';
@@ -26,7 +27,7 @@ class _QuizCardState extends State<QuizCard> {
     super.dispose();
   }
 
-  Future<void> _submitAnswer(String currentQuestion) async {
+  Future<void> _submitAnswer(String correctAnswer) async {
     final answer = _answerController.text.trim();
     if (answer.isEmpty) {
       setState(() {
@@ -42,16 +43,31 @@ class _QuizCardState extends State<QuizCard> {
     });
 
     try {
-      await Future.delayed(const Duration(milliseconds: 600));
+      final bool isMatch = answer.toLowerCase() == correctAnswer.toLowerCase();
+
+      await FirebaseFirestore.instance
+          .collection('game_state')
+          .doc('current')
+          .collection('healer_answers')
+          .doc(widget.currentUser.id)
+          .set({
+        'healerId': widget.currentUser.id,
+        'healerName': widget.currentUser.username,
+        'submittedAnswer': answer,
+        'isCorrect': isMatch,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
 
       setState(() {
-        _feedbackMessage = 'Answer recorded! ALL active Healers must answer correctly to save the target.';
-        _isCorrect = true;
+        _feedbackMessage = isMatch
+            ? 'Answer recorded in Firebase! ALL active Healers must answer correctly to save the target.'
+            : 'Incorrect answer submitted to Firebase.';
+        _isCorrect = isMatch;
         _answerController.clear();
       });
     } catch (e) {
       setState(() {
-        _feedbackMessage = 'Failed to submit answer: $e';
+        _feedbackMessage = 'Failed to submit answer to Firebase: $e';
         _isCorrect = false;
       });
     } finally {
@@ -72,21 +88,24 @@ class _QuizCardState extends State<QuizCard> {
         final bool isNight = gameState['isNight'] ?? false;
         final String announcement = gameState['announcement'] ?? '';
 
-        // SAFELY PARSE activeQuestion (handles both Map and String structures)
         final rawQuestion = gameState['activeQuestion'];
         String activeQuestionText = '';
+        String correctAnswer = '';
 
         if (rawQuestion is Map) {
           activeQuestionText = rawQuestion['question']?.toString() ??
               rawQuestion['text']?.toString() ??
               rawQuestion['title']?.toString() ??
               '';
+          correctAnswer = rawQuestion['correctAnswer']?.toString() ??
+              rawQuestion['answer']?.toString() ??
+              '';
         } else if (rawQuestion is String) {
           activeQuestionText = rawQuestion;
         }
 
         if (activeQuestionText.isEmpty) {
-          activeQuestionText = 'Waiting for the Moderator to transmit the Healer quiz challenge...';
+          activeQuestionText = 'Waiting for the Moderator/Killer to transmit the Healer quiz challenge...';
         }
 
         if (!widget.currentUser.isAlive) {
@@ -114,12 +133,10 @@ class _QuizCardState extends State<QuizCard> {
           );
         }
 
-        // Quiz is EXCLUSIVELY available to Healers
         final isHealer = widget.currentUser.identity.toLowerCase() == 'healer';
 
         return Column(
           children: [
-            // Ambient Phase Update Bar across all client screens
             Card(
               color: isNight ? Colors.indigo.shade900 : Colors.amber.shade100,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -273,7 +290,7 @@ class _QuizCardState extends State<QuizCard> {
                           prefixIcon: Icon(Icons.edit_note),
                           border: OutlineInputBorder(),
                         ),
-                        onSubmitted: (val) => _submitAnswer(activeQuestionText),
+                        onSubmitted: (val) => _submitAnswer(correctAnswer),
                       ),
 
                       if (_feedbackMessage != null) ...[
@@ -313,7 +330,7 @@ class _QuizCardState extends State<QuizCard> {
 
                       const SizedBox(height: 16),
                       ElevatedButton.icon(
-                        onPressed: _isSubmitting ? null : () => _submitAnswer(activeQuestionText),
+                        onPressed: _isSubmitting ? null : () => _submitAnswer(correctAnswer),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.teal.shade800,
                           foregroundColor: Colors.white,
