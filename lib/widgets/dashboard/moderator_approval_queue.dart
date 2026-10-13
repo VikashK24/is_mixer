@@ -1,45 +1,35 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
-import '../../services/json_storage_service.dart';
 
-class ModeratorApprovalQueueScreen extends StatefulWidget {
-  const ModeratorApprovalQueueScreen({super.key});
+class ModeratorApprovalQueuePage extends StatefulWidget {
+  const ModeratorApprovalQueuePage({super.key});
 
   @override
-  State<ModeratorApprovalQueueScreen> createState() =>
-      _ModeratorApprovalQueueScreenState();
+  State<ModeratorApprovalQueuePage> createState() => _ModeratorApprovalQueuePageState();
 }
 
-class _ModeratorApprovalQueueScreenState
-    extends State<ModeratorApprovalQueueScreen> {
-  final Set<String> _loadingUserIds = {};
-
-  Future<void> _toggleModeratorApproval(User user) async {
-    setState(() {
-      _loadingUserIds.add(user.id);
-    });
-
+class _ModeratorApprovalQueuePageState extends State<ModeratorApprovalQueuePage> {
+  Future<void> _updateUserApproval(String userId, bool isApproved) async {
     try {
-      if (!user.isApproved || user.isTerminated) {
-        await JsonStorageService.approveModerator(user.id);
-        await JsonStorageService.reactivateUser(user.id);
-      } else {
-        await JsonStorageService.softDeleteUser(user.id);
+      await FirebaseFirestore.instance.collection('users').doc(userId).update({
+        'isApproved': isApproved,
+        'approvedAt': isApproved ? FieldValue.serverTimestamp() : null,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isApproved ? 'Player approved!' : 'Player approval revoked.'),
+            backgroundColor: isApproved ? Colors.green : Colors.orange,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Action failed: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text('Failed to update status: $e'), backgroundColor: Colors.red),
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loadingUserIds.remove(user.id);
-        });
       }
     }
   }
@@ -48,76 +38,147 @@ class _ModeratorApprovalQueueScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Moderator Approvals & Access'),
+        title: const Text('Moderator Approval Queue'),
+        backgroundColor: Colors.indigo.shade800,
+        foregroundColor: Colors.white,
       ),
-      body: StreamBuilder<List<User>>(
-        stream: JsonStorageService.streamAllUsers(),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseFirestore.instance.collection('users').snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting &&
-              !snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
           if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
+            return Center(child: Text('Error loading users: ${snapshot.error}'));
           }
 
-          // Fetch all moderators (excluding superadmin and mafia players)
-          final moderators = (snapshot.data ?? [])
-              .where((u) => u.role == 'moderator')
-              .toList();
+          final docs = snapshot.data?.docs ?? [];
+          final allUsers = docs.map((d) => User.fromJson(d.data())).toList();
 
-          if (moderators.isEmpty) {
-            return const Center(
-              child: Text('No registered moderators found.'),
-            );
-          }
+          // Split users into pending and approved queues
+          final pendingUsers = allUsers.where((u) => !u.isApproved && u.role.toLowerCase() != 'moderator').toList();
+          final approvedUsers = allUsers.where((u) => u.isApproved && u.role.toLowerCase() != 'moderator').toList();
 
-          return ListView.separated(
-            padding: const EdgeInsets.all(16),
-            itemCount: moderators.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final user = moderators[index];
-              final isLoading = _loadingUserIds.contains(user.id);
-              final bool isActive = user.isApproved && !user.isTerminated;
-
-              return ListTile(
-                leading: CircleAvatar(
-                  backgroundColor:
-                      isActive ? Colors.green.shade100 : Colors.amber.shade100,
-                  child: Icon(
-                    isActive ? Icons.verified_user : Icons.security,
-                    color: isActive ? Colors.green : Colors.amber.shade900,
-                  ),
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 1. PENDING APPROVALS SECTION
+                Row(
+                  children: [
+                    Icon(Icons.pending_actions, color: Colors.orange.shade800),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Pending Approvals (${pendingUsers.length})',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ],
                 ),
-                title: Text(
-                  user.username,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  'Role: MODERATOR • Status: ${isActive ? "Active / Approved" : "Pending / Revoked"}',
-                ),
-                trailing: isLoading
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: isActive
-                              ? Colors.red.shade700
-                              : Colors.green.shade700,
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: () => _toggleModeratorApproval(user),
+                const SizedBox(height: 8),
+                if (pendingUsers.isEmpty)
+                  const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Center(
                         child: Text(
-                          isActive ? 'Revoke Access' : 'Approve Access',
+                          'No pending player approvals at this time.',
+                          style: TextStyle(color: Colors.grey),
                         ),
                       ),
-              );
-            },
+                    ),
+                  )
+                else
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: pendingUsers.length,
+                    itemBuilder: (context, index) {
+                      final user = pendingUsers[index];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.orange.shade100,
+                            child: Icon(Icons.person, color: Colors.orange.shade900),
+                          ),
+                          title: Text(user.username, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text('Identity: ${user.identity.toUpperCase()} | Role: ${user.role}'),
+                          trailing: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                            ),
+                            icon: const Icon(Icons.check, size: 18),
+                            label: const Text('Approve'),
+                            onPressed: () => _updateUserApproval(user.id, true),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 12),
+
+                // 2. APPROVED PLAYERS QUEUE SECTION
+                Row(
+                  children: [
+                    Icon(Icons.verified_user, color: Colors.green.shade800),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Approved Players Queue (${approvedUsers.length})',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (approvedUsers.isEmpty)
+                  const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(16.0),
+                      child: Center(
+                        child: Text(
+                          'No approved players found in this queue yet.',
+                          style: TextStyle(color: Colors.grey),
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: approvedUsers.length,
+                    itemBuilder: (context, index) {
+                      final user = approvedUsers[index];
+                      return Card(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        color: Colors.green.shade50,
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.green.shade100,
+                            child: Icon(Icons.check_circle, color: Colors.green.shade800),
+                          ),
+                          title: Text(user.username, style: const TextStyle(fontWeight: FontWeight.bold)),
+                          subtitle: Text('Identity: ${user.identity.toUpperCase()} | Status: Approved'),
+                          trailing: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.red,
+                              side: const BorderSide(color: Colors.red),
+                            ),
+                            icon: const Icon(Icons.block, size: 18),
+                            label: const Text('Revoke'),
+                            onPressed: () => _updateUserApproval(user.id, false),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
           );
         },
       ),

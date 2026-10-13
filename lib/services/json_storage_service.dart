@@ -53,7 +53,7 @@ class JsonStorageService {
   }
 
   static Future<User> authenticateUser(String username, String role) async {
-    await seedSuperAdmin();
+    // await seedSuperAdmin();
 
     final prefs = await SharedPreferences.getInstance();
     final normalizedInput = username.trim().toLowerCase();
@@ -181,6 +181,18 @@ class JsonStorageService {
       'isTerminated': true,
       'isLoggedIn': false,
     });
+  }
+
+  /// Moderator/Super Admin: free another user's "already logged in" lock.
+  /// Unlike [logOut], this does NOT clear the local device session of the caller.
+  static Future<void> forceLogOutUser(String userId) async {
+    await _usersCol.doc(userId).update({'isLoggedIn': false});
+  }
+
+  static Future<void> logOut(String userId) async {
+    await _usersCol.doc(userId).update({'isLoggedIn': false});
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_sessionKey);
   }
 
   // GAME ENGINE UPDATES

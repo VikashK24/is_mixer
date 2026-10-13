@@ -26,7 +26,7 @@ class UserProfileHeader extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(
-          'Welcome back, ${user.username}!',
+          'Welcome back, $displayIdentity!',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         const SizedBox(height: 6),

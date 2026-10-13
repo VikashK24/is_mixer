@@ -1,36 +1,35 @@
 import 'dart:math';
 import '../models/user_model.dart';
 
-/// Represents a vote cast by a role (Killer, Healer, Detective) during a phase turn
-class NightPhaseVote {
-  final String userId;
-  final String questionId;
-  final DateTime timestamp;
+/// Result of counting votes. Ties are broken in favour of the option that
+/// received its first vote earliest, but [isTie] still reports the tie so the
+/// caller can decide whether a tie should count (e.g. no elimination).
+class VoteResult {
+  final String? winner;
+  final bool isTie;
+  final Map<String, int> counts;
 
-  NightPhaseVote({
-    required this.userId,
-    required this.questionId,
-    required this.timestamp,
-  });
-}
-
-/// Payload returned after resolving the night phase outcome
-class NightResolution {
-  final User target;
-  final bool isSaved;
-  final String selectedQuestion;
-  final String broadcastMessage;
-
-  NightResolution({
-    required this.target,
-    required this.isSaved,
-    required this.selectedQuestion,
-    required this.broadcastMessage,
+  const VoteResult({
+    required this.winner,
+    required this.isTie,
+    required this.counts,
   });
 }
 
 class GameEngineService {
   static final Random _random = Random();
+
+  static const Set<String> validIdentities = {
+    'killer',
+    'healer',
+    'detective',
+    'villager',
+  };
+
+  /// True when the player holds a real in-game identity (case-insensitive,
+  /// so both 'none' and legacy 'NONE' count as unassigned).
+  static bool hasIdentity(User user) =>
+      validIdentities.contains(user.identity.toLowerCase());
 
   /// 1. DYNAMIC IDENTITY ASSIGNMENT ALGORITHM
   /// Role distribution:
@@ -81,93 +80,90 @@ class GameEngineService {
     });
   }
 
-  /// 2. SECRET TARGET SELECTION
-  static User selectSecretTarget(List<User> activePlayers) {
-    final potentialTargets = activePlayers
-        .where((p) => p.isAlive && p.identity.toLowerCase() != 'killer')
-        .toList();
-
-    if (potentialTargets.isEmpty) {
-      throw StateError('No valid innocent targets remaining.');
-    }
-
-    return potentialTargets[_random.nextInt(potentialTargets.length)];
-  }
-
-  /// 3. QUESTION BANK SAMPLING
-  static List<String> getAvailableOptions({
-    required List<String> moderatorQuestionBank,
+  /// 2. SHARED QUESTION OPTIONS
+  /// Picks the quiz options ALL killers choose from this round. Unused
+  /// questions come first; if fewer than [count] are left, already used ones
+  /// top the list up so a small bank never runs dry. Questions without an id
+  /// are skipped because votes refer to questions by id.
+  static List<Map<String, dynamic>> pickQuestionOptions({
+    required List<Map<String, dynamic>> bank,
     required List<String> usedQuestionIds,
+    int count = 4,
   }) {
-    final unused = moderatorQuestionBank
-        .where((q) => !usedQuestionIds.contains(q))
-        .toList();
-    unused.shuffle(_random);
-    return unused.take(4).toList();
-  }
-
-  /// 4. VOTE RESOLUTION ENGINE (TIE-BREAKING BY TIMESTAMP)
-  static String resolveWinningQuestion(List<NightPhaseVote> votes) {
-    if (votes.isEmpty) return '';
-
-    final Map<String, List<NightPhaseVote>> groupedVotes = {};
-    for (var vote in votes) {
-      groupedVotes.putIfAbsent(vote.questionId, () => []).add(vote);
+    final seen = <String>{};
+    final pool = <Map<String, dynamic>>[];
+    for (final q in bank) {
+      final id = q['id']?.toString() ?? '';
+      if (id.isEmpty || !seen.add(id)) continue;
+      pool.add(q);
     }
 
-    String winningQuestionId = '';
-    int maxCount = -1;
-    DateTime earliestTime = DateTime.now().add(const Duration(days: 365));
+    final unused = pool
+        .where((q) => !usedQuestionIds.contains(q['id'].toString()))
+        .toList()
+      ..shuffle(_random);
+    final used = pool
+        .where((q) => usedQuestionIds.contains(q['id'].toString()))
+        .toList()
+      ..shuffle(_random);
 
-    groupedVotes.forEach((questionId, voteList) {
-      final int count = voteList.length;
-      voteList.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      final DateTime firstVoteTime = voteList.first.timestamp;
+    return [...unused, ...used].take(count).toList();
+  }
 
-      if (count > maxCount) {
-        maxCount = count;
-        earliestTime = firstVoteTime;
-        winningQuestionId = questionId;
-      } else if (count == maxCount) {
-        if (firstVoteTime.isBefore(earliestTime)) {
-          earliestTime = firstVoteTime;
-          winningQuestionId = questionId;
-        }
+  /// Copy of a question that is safe to show to killers (no answer key).
+  static Map<String, dynamic> publicQuestion(Map<String, dynamic> question) {
+    final copy = Map<String, dynamic>.from(question);
+    copy.remove('correctAnswer');
+    copy.remove('answer');
+    return copy;
+  }
+
+  /// 3. VOTE TALLY (killer target/question, healer protection, day trial)
+  static VoteResult tally(Iterable<MapEntry<String, DateTime>> picks) {
+    final counts = <String, int>{};
+    final firstVote = <String, DateTime>{};
+
+    for (final pick in picks) {
+      counts[pick.key] = (counts[pick.key] ?? 0) + 1;
+      final earliest = firstVote[pick.key];
+      if (earliest == null || pick.value.isBefore(earliest)) {
+        firstVote[pick.key] = pick.value;
       }
-    });
-
-    return winningQuestionId;
-  }
-
-  /// 5. DEFENSE RESOLUTION ENGINE
-  static NightResolution resolveNightPhase({
-    required User secretTarget,
-    required String selectedQuestion,
-    required bool healerSolved,
-    required bool detectiveSolved,
-    required bool hasActiveHealer,
-    required bool hasActiveDetective,
-  }) {
-    bool isSaved = false;
-    String savedByRole = 'None';
-
-    if (hasActiveHealer && healerSolved) {
-      isSaved = true;
-      savedByRole = 'Healer';
-    } else if (hasActiveDetective && detectiveSolved) {
-      isSaved = true;
-      savedByRole = 'Detective';
     }
 
-    final message = isSaved
-        ? 'ALERT TO VILLAGERS: ${secretTarget.username} was targeted by the Killer group, but was successfully SAVED by $savedByRole team consensus!'
-        : 'ALERT TO VILLAGERS: The rescue attempt failed. ${secretTarget.username} was TERMINATED!';
+    if (counts.isEmpty) {
+      return const VoteResult(winner: null, isTie: false, counts: {});
+    }
 
-    return NightResolution(
-      target: isSaved ? secretTarget : secretTarget.copyWith(isAlive: false),
-      isSaved: isSaved,
-      selectedQuestion: selectedQuestion,
-      broadcastMessage: message,
+    final top = counts.values.reduce(max);
+    final leaders = counts.entries
+        .where((e) => e.value == top)
+        .map((e) => e.key)
+        .toList()
+      ..sort((a, b) => firstVote[a]!.compareTo(firstVote[b]!));
+
+    return VoteResult(
+      winner: leaders.first,
+      isTie: leaders.length > 1,
+      counts: counts,
     );
+  }
+
+  /// 4. WIN CONDITION
+  /// Returns 'town' when every killer is gone, 'killers' when they equal or
+  /// outnumber everyone else, otherwise null (game continues).
+  static String? checkWinner(List<User> players) {
+    final living = players
+        .where((p) => p.isAlive && !p.isTerminated && hasIdentity(p))
+        .toList();
+    if (living.isEmpty) return null;
+
+    final killers =
+        living.where((p) => p.identity.toLowerCase() == 'killer').length;
+    final others = living.length - killers;
+
+    if (killers == 0) return 'town';
+    if (killers >= others) return 'killers';
+    return null;
   }
 }
