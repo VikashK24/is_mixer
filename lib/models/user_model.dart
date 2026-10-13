@@ -7,6 +7,7 @@ class User {
   final bool isApproved;
   final bool isTerminated;
   final bool isAlive;
+  final bool isLoggedIn; // New field to track if the user is currently logged in
 
   User({
     required this.id,
@@ -17,6 +18,7 @@ class User {
     this.isApproved = false,
     this.isTerminated = false,
     this.isAlive = true,
+    this.isLoggedIn = false,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -31,6 +33,7 @@ class User {
       isApproved: json['isApproved'] ?? false,
       isTerminated: json['isTerminated'] ?? false,
       isAlive: json['isAlive'] ?? true,
+      isLoggedIn: json['isLoggedIn'] ?? false,
     );
   }
 
@@ -44,6 +47,7 @@ class User {
       'isApproved': isApproved,
       'isTerminated': isTerminated,
       'isAlive': isAlive,
+      'isLoggedIn': isLoggedIn,
     };
   }
 
@@ -56,6 +60,7 @@ class User {
     bool? isApproved,
     bool? isTerminated,
     bool? isAlive,
+    bool? isLoggedIn,
   }) {
     return User(
       id: id ?? this.id,
@@ -66,6 +71,7 @@ class User {
       isApproved: isApproved ?? this.isApproved,
       isTerminated: isTerminated ?? this.isTerminated,
       isAlive: isAlive ?? this.isAlive,
+      isLoggedIn: isLoggedIn ?? this.isLoggedIn,
     );
   }
 }

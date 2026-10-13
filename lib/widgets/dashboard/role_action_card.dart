@@ -2,9 +2,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../../services/json_storage_service.dart';
-import 'healer_action_card.dart';
-import 'killer_action_card.dart';
 
+/// Detective investigation card (also the fallback slot for players who have
+/// no identity yet - those see nothing).
+///
+/// Rules enforced here:
+///  - only real players can be investigated (never moderators or the God
+///    account) and only their usernames are listed, so no role or identity
+///    information leaks through the list;
+///  - one investigation per night, stored in
+///    game_state/current/detective_checks/{detectiveId}; the moderator clears
+///    these at the start of every round.
 class RoleActionCard extends StatefulWidget {
   final User currentUser;
 
@@ -20,266 +28,269 @@ class RoleActionCard extends StatefulWidget {
 class _RoleActionCardState extends State<RoleActionCard> {
   String? _selectedPlayerId;
   bool _isProcessing = false;
-  String? _actionFeedback;
-  bool? _isTargetKiller;
+  String? _errorMessage;
+  String? _lastRoundToken;
 
-  Future<void> _executeRoleAction(List<User> eligibleTargets) async {
-    if (_selectedPlayerId == null) {
-      setState(() {
-        _actionFeedback = 'Please select a target first.';
-      });
-      return;
-    }
+  DocumentReference<Map<String, dynamic>> get _checkRef => FirebaseFirestore.instance
+      .collection('game_state')
+      .doc('current')
+      .collection('detective_checks')
+      .doc(widget.currentUser.id);
 
-    final targetUser = eligibleTargets.firstWhere(
-      (u) => u.id == _selectedPlayerId,
-      orElse: () => eligibleTargets.first,
-    );
+  /// Only in-game players, excluding self and anyone eliminated or blocked.
+  List<User> _eligibleTargets(List<User> allUsers) {
+    return allUsers.where((u) {
+      final isPlayer = u.role == 'mafia'; // excludes moderator + superadmin
+      final isSelf = u.id == widget.currentUser.id;
+      return isPlayer && !isSelf && u.isAlive && !u.isTerminated;
+    }).toList()
+      ..sort((a, b) => a.username.toLowerCase().compareTo(b.username.toLowerCase()));
+  }
 
+  Future<void> _investigate(User target) async {
     setState(() {
       _isProcessing = true;
-      _actionFeedback = null;
-      _isTargetKiller = null;
+      _errorMessage = null;
     });
 
     try {
-      await Future.delayed(const Duration(milliseconds: 500));
-      final identity = widget.currentUser.identity.toLowerCase();
-
-      if (identity == 'detective') {
-        final isKiller = targetUser.identity.toLowerCase() == 'killer' || targetUser.role.toLowerCase() == 'killer';
-        setState(() {
-          _isTargetKiller = isKiller;
-          _actionFeedback = 'Investigation Complete for ${targetUser.username}:';
-        });
-      } else {
-        setState(() {
-          _actionFeedback = 'Action submitted against ${targetUser.username}.';
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _actionFeedback = 'Action failed: $e';
+      final bool isKiller = target.identity.toLowerCase() == 'killer';
+      await _checkRef.set({
+        'detectiveId': widget.currentUser.id,
+        'targetUserId': target.id,
+        'targetName': target.username,
+        'isKiller': isKiller,
+        'timestamp': FieldValue.serverTimestamp(),
       });
+    } catch (e) {
+      if (mounted) setState(() => _errorMessage = 'Investigation failed: $e');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
-      }
+      if (mounted) setState(() => _isProcessing = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final identity = widget.currentUser.identity.toLowerCase();
+    if (identity != 'detective') return const SizedBox.shrink();
+    if (!widget.currentUser.isAlive) return const SizedBox.shrink();
+
     return StreamBuilder<Map<String, dynamic>>(
       stream: JsonStorageService.streamGameState(),
-      builder: (context, snapshot) {
-        final gameState = snapshot.data ?? {};
+      builder: (context, gameSnapshot) {
+        final gameState = gameSnapshot.data ?? {};
         final String phase = (gameState['phase'] ?? 'idle').toString();
-        final identity = widget.currentUser.identity.toLowerCase();
+        final bool isDetectivePhase = phase == 'detectivePhase';
 
-        // STREAM ALL USERS FOR ROLE CARDS
-        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: FirebaseFirestore.instance.collection('users').snapshots(),
-          builder: (context, usersSnap) {
-            final userDocs = usersSnap.data?.docs ?? [];
-            final List<User> allUsers = userDocs
-                .map((doc) => User.fromJson(doc.data()))
-                .toList();
+        // Fresh selection every round.
+        final String roundToken = (gameState['roundToken'] ?? '').toString();
+        if (roundToken != _lastRoundToken) {
+          _lastRoundToken = roundToken;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _selectedPlayerId = null;
+              _errorMessage = null;
+            });
+          });
+        }
 
-            // 1. HEALER ROLE
-            if (identity == 'healer') {
-              if (phase == 'healerPhase') {
-                return HealerActionCard(
-                  currentUser: widget.currentUser,
-                  players: allUsers,
-                );
-              }
-              return Card(
-                elevation: 2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                child: const Padding(
-                  padding: EdgeInsets.all(20.0),
-                  child: Center(
-                    child: Text(
-                      'Healer Phase is currently inactive. Please wait for the moderator.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey),
-                    ),
-                  ),
-                ),
-              );
-            }
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: _checkRef.snapshots(),
+          builder: (context, checkSnapshot) {
+            final Map<String, dynamic>? check =
+                checkSnapshot.data?.exists == true ? checkSnapshot.data!.data() : null;
+            final bool hasInvestigated = check != null;
 
-            // 2. KILLER ROLE
-            if (identity == 'killer') {
-              if (phase == 'killerPhase') {
-                return KillerActionCard(
-                  currentUser: widget.currentUser,
-                  players: allUsers,
-                );
-              }
-              return Card(
-                elevation: 2,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                child: const Padding(
-                  padding: EdgeInsets.all(20.0),
-                  child: Center(
-                    child: Text(
-                      'Killer Phase is currently inactive. Please wait for nightfall.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey),
-                    ),
-                  ),
-                ),
-              );
-            }
+            return StreamBuilder<List<User>>(
+              stream: JsonStorageService.streamAllUsers(),
+              builder: (context, usersSnapshot) {
+                final eligibleTargets = _eligibleTargets(usersSnapshot.data ?? []);
+                final Set<String> validIds = eligibleTargets.map((u) => u.id).toSet();
+                final String? dropdownValue =
+                    (_selectedPlayerId != null && validIds.contains(_selectedPlayerId))
+                        ? _selectedPlayerId
+                        : null;
+                final User? selectedTarget = dropdownValue == null
+                    ? null
+                    : eligibleTargets.where((u) => u.id == dropdownValue).firstOrNull;
 
-            // 3. DETECTIVE ROLE
-            bool isRoleActiveInPhase = false;
-            if (identity == 'detective' && phase == 'detectivePhase') {
-              isRoleActiveInPhase = true;
-            }
+                final bool canInvestigate =
+                    isDetectivePhase && !hasInvestigated && !_isProcessing;
 
-            if (!isRoleActiveInPhase) {
-              return const SizedBox.shrink();
-            }
+                final Color primaryColor = Colors.indigo.shade800;
 
-            // Filter targets for detective: exclude self and dead players
-            final eligibleTargets = allUsers.where((u) {
-              final isSelf = u.id == widget.currentUser.id;
-              final isTerminated = u.isTerminated || !(u.isAlive ?? true);
-              return !isSelf && !isTerminated;
-            }).toList();
-
-            final Color primaryColor = Colors.indigo.shade800;
-            const IconData icon = Icons.search;
-            const String title = 'Detective Investigation';
-            const String subtitle = 'Select a player to investigate whether they are a Killer.';
-
-            return Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
+                return Card(
+                  elevation: 4,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        CircleAvatar(
-                          backgroundColor: primaryColor.withOpacity(0.15),
-                          child: Icon(icon, color: primaryColor),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: primaryColor,
-                                ),
-                              ),
-                              Text(
-                                subtitle,
-                                style: const TextStyle(fontSize: 12, color: Colors.grey),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Divider(height: 24),
-
-                    DropdownButtonFormField<String>(
-                      value: _selectedPlayerId,
-                      decoration: const InputDecoration(
-                        labelText: 'Select Target Player to Investigate',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: eligibleTargets.map((u) {
-                        return DropdownMenuItem<String>(
-                          value: u.id,
-                          child: Text(u.username),
-                        );
-                      }).toList(),
-                      onChanged: (val) {
-                        setState(() {
-                          _selectedPlayerId = val;
-                          _actionFeedback = null;
-                          _isTargetKiller = null;
-                        });
-                      },
-                    ),
-
-                    if (_actionFeedback != null) ...[
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: _isTargetKiller == null
-                              ? Colors.blue.shade50
-                              : (_isTargetKiller! ? Colors.red.shade50 : Colors.green.shade50),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _isTargetKiller == null
-                                ? Colors.blue.shade200
-                                : (_isTargetKiller! ? Colors.red.shade300 : Colors.green.shade300),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        Row(
                           children: [
-                            Text(
-                              _actionFeedback!,
-                              style: TextStyle(
-                                color: _isTargetKiller == null
-                                    ? Colors.blue.shade900
-                                    : (_isTargetKiller! ? Colors.red.shade900 : Colors.green.shade900),
-                                fontWeight: FontWeight.bold,
+                            CircleAvatar(
+                              backgroundColor: primaryColor.withOpacity(0.15),
+                              child: Icon(Icons.search, color: primaryColor),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Detective Investigation',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: primaryColor,
+                                    ),
+                                  ),
+                                  const Text(
+                                    'Investigate one player each night to learn if they are a Killer.',
+                                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                                  ),
+                                ],
                               ),
                             ),
-                            if (_isTargetKiller != null) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                _isTargetKiller! ? 'TARGET IS A KILLER! 🔪' : 'TARGET IS NOT A KILLER 🛡️',
-                                style: TextStyle(
-                                  color: _isTargetKiller! ? Colors.red.shade900 : Colors.green.shade900,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                ),
-                              ),
-                            ],
                           ],
                         ),
-                      ),
-                    ],
+                        const Divider(height: 24),
 
-                    const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      onPressed: _isProcessing ? null : () => _executeRoleAction(eligibleTargets),
-                      icon: _isProcessing
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : Icon(icon),
-                      label: Text(_isProcessing ? 'Investigating...' : 'Investigate Player'),
+                        if (hasInvestigated) ...[
+                          // Result of tonight's investigation, kept on screen.
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: check['isKiller'] == true
+                                  ? Colors.red.shade50
+                                  : Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: check['isKiller'] == true
+                                    ? Colors.red.shade300
+                                    : Colors.green.shade300,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Investigation Complete for ${check['targetName'] ?? 'player'}:',
+                                  style: TextStyle(
+                                    color: check['isKiller'] == true
+                                        ? Colors.red.shade900
+                                        : Colors.green.shade900,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  check['isKiller'] == true
+                                      ? 'TARGET IS A KILLER! 🔪'
+                                      : 'TARGET IS NOT A KILLER 🛡️',
+                                  style: TextStyle(
+                                    color: check['isKiller'] == true
+                                        ? Colors.red.shade900
+                                        : Colors.green.shade900,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            'You can investigate again next night.',
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                          ),
+                        ] else if (!isDetectivePhase) ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16.0),
+                            child: Center(
+                              child: Text(
+                                'Waiting for the Detective phase to begin...',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.grey,
+                                  fontStyle: FontStyle.italic,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ] else ...[
+                          // Usernames only - no role, identity or brackets.
+                          DropdownButtonFormField<String>(
+                            value: dropdownValue,
+                            decoration: const InputDecoration(
+                              labelText: 'Select Player to Investigate',
+                              border: OutlineInputBorder(),
+                            ),
+                            items: eligibleTargets.map((u) {
+                              return DropdownMenuItem<String>(
+                                value: u.id,
+                                child: Text(u.username),
+                              );
+                            }).toList(),
+                            onChanged: canInvestigate
+                                ? (val) => setState(() {
+                                      _selectedPlayerId = val;
+                                      _errorMessage = null;
+                                    })
+                                : null,
+                          ),
+                          if (_errorMessage != null) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.red.shade50,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.red.shade300),
+                              ),
+                              child: Text(
+                                _errorMessage!,
+                                style: TextStyle(
+                                  color: Colors.red.shade900,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: primaryColor,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                            onPressed: (canInvestigate && selectedTarget != null)
+                                ? () => _investigate(selectedTarget)
+                                : null,
+                            icon: _isProcessing
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2, color: Colors.white),
+                                  )
+                                : const Icon(Icons.search),
+                            label: Text(
+                                _isProcessing ? 'Investigating...' : 'Investigate Player'),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'You only get one investigation per night.',
+                            style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                          ),
+                        ],
+                      ],
                     ),
-                  ],
-                ),
-              ),
+                  ),
+                );
+              },
             );
           },
         );

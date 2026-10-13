@@ -3,14 +3,21 @@ import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../../services/json_storage_service.dart';
 
+/// Town trial vote. Every living player can accuse someone during the day
+/// phase; the moderator counts the votes when the round is finalized.
+///
+/// Villagers always see the card (locked outside the day phase). For the other
+/// roles pass [hideWhenClosed] so it only appears while voting is open.
 class VillagerActionCard extends StatefulWidget {
   final User currentUser;
   final List<User> players;
+  final bool hideWhenClosed;
 
   const VillagerActionCard({
     super.key,
     required this.currentUser,
     required this.players,
+    this.hideWhenClosed = false,
   });
 
   @override
@@ -20,18 +27,19 @@ class VillagerActionCard extends StatefulWidget {
 class _VillagerActionCardState extends State<VillagerActionCard> {
   String? _selectedAccusedId;
   bool _isSubmitting = false;
+  String? _lastRoundToken;
 
   // Filter out self and dead/terminated players
   List<User> get _validAccusationTargets {
     return widget.players.where((p) {
       final isSelf = p.id == widget.currentUser.id;
-      final isTerminated = p.isTerminated || !p.isAlive;
-      return !isSelf && !isTerminated;
+      return !isSelf && p.isAlive && !p.isTerminated;
     }).toList();
   }
 
   Future<void> _submitDayVote() async {
     if (_selectedAccusedId == null) return;
+    if (!_validAccusationTargets.any((u) => u.id == _selectedAccusedId)) return;
 
     setState(() => _isSubmitting = true);
 
@@ -52,7 +60,7 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Accusation vote recorded in Firebase!'),
+            content: Text('Accusation vote recorded! You can change it until time runs out.'),
             backgroundColor: Colors.amber,
             duration: Duration(seconds: 2),
           ),
@@ -74,18 +82,33 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
 
   @override
   Widget build(BuildContext context) {
+    // Eliminated players can no longer vote (the quiz card already tells them).
+    if (!widget.currentUser.isAlive || widget.currentUser.isTerminated) {
+      return const SizedBox.shrink();
+    }
+
     return StreamBuilder<Map<String, dynamic>>(
       stream: JsonStorageService.streamGameState(),
       builder: (context, gameStateSnapshot) {
         final gameState = gameStateSnapshot.data ?? {};
-        final bool isNight = gameState['isNight'] ?? false;
-        final String phase = (gameState['phase'] ?? '').toString().toLowerCase();
+        final String phase = (gameState['phase'] ?? 'idle').toString();
 
-        // Enable voting during Day Phase or when discussion phase is explicitly active
-        final bool isDiscussionActive = !isNight ||
-            phase.contains('day') ||
-            phase.contains('discussion') ||
-            (gameState['discussionPhaseActive'] ?? false) == true;
+        // Voting is only open during the day / villagers phase.
+        final bool isVotingOpen = phase == 'villagersPhase';
+
+        if (!isVotingOpen && widget.hideWhenClosed) {
+          return const SizedBox.shrink();
+        }
+
+        // Fresh selection every round.
+        final String roundToken = (gameState['roundToken'] ?? '').toString();
+        if (roundToken != _lastRoundToken) {
+          _lastRoundToken = roundToken;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() => _selectedAccusedId = null);
+          });
+        }
 
         return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
@@ -95,12 +118,23 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
               .snapshots(),
           builder: (context, dayVotesSnapshot) {
             final voteDocs = dayVotesSnapshot.data?.docs ?? [];
-            final myVoteDoc = voteDocs
-                .where((doc) => doc.id == widget.currentUser.id)
-                .firstOrNull;
+            final myVoteDoc =
+                voteDocs.where((doc) => doc.id == widget.currentUser.id).firstOrNull;
 
-            final currentVotedId =
-                _selectedAccusedId ?? myVoteDoc?.data()['accusedUserId'];
+            final Set<String> validIds = _validAccusationTargets.map((u) => u.id).toSet();
+            final String? savedVote = isVotingOpen
+                ? myVoteDoc?.data()['accusedUserId'] as String?
+                : null;
+
+            // What I picked now, else what I voted earlier - only if still valid.
+            String? dropdownValue = _selectedAccusedId ?? savedVote;
+            if (dropdownValue != null && !validIds.contains(dropdownValue)) {
+              dropdownValue = null;
+            }
+
+            final String? votedName = savedVote == null
+                ? null
+                : widget.players.where((p) => p.id == savedVote).firstOrNull?.username;
 
             return Card(
               elevation: 4,
@@ -131,18 +165,17 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: isDiscussionActive
+                            color: isVotingOpen
                                 ? Colors.green.shade100
                                 : Colors.grey.shade300,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
-                            isDiscussionActive ? 'VOTING OPEN' : 'LOCKED',
+                            isVotingOpen ? 'VOTING OPEN' : 'LOCKED',
                             style: TextStyle(
-                              color: isDiscussionActive
+                              color: isVotingOpen
                                   ? Colors.green.shade900
                                   : Colors.grey.shade700,
                               fontWeight: FontWeight.bold,
@@ -154,7 +187,7 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
                     ),
                     const Divider(height: 24),
 
-                    if (!isDiscussionActive) ...[
+                    if (!isVotingOpen) ...[
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -167,7 +200,7 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
                             SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'Accusation voting is disabled during Night Phase. Wait for the Moderator to start the Discussion phase.',
+                                'Accusation voting opens when the Moderator starts the Day phase.',
                                 style: TextStyle(
                                   color: Colors.black54,
                                   fontSize: 13,
@@ -191,7 +224,7 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
                           border: OutlineInputBorder(),
                           hintText: 'Select suspect to accuse...',
                         ),
-                        value: currentVotedId,
+                        value: dropdownValue,
                         items: _validAccusationTargets.map((user) {
                           return DropdownMenuItem<String>(
                             value: user.id,
@@ -202,11 +235,26 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
                           setState(() => _selectedAccusedId = val);
                         },
                       ),
+
+                      if (votedName != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Your current vote: $votedName',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange.shade900,
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 16),
 
                       ElevatedButton.icon(
-                        onPressed: (_selectedAccusedId != null && !_isSubmitting)
-                            ? _submitDayVote
+                        onPressed: (dropdownValue != null && !_isSubmitting)
+                            ? () {
+                                _selectedAccusedId = dropdownValue;
+                                _submitDayVote();
+                              }
                             : null,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange.shade800,
@@ -226,7 +274,7 @@ class _VillagerActionCardState extends State<VillagerActionCard> {
                         label: Text(
                           _isSubmitting
                               ? 'Recording Vote...'
-                              : 'Cast Accusation Vote',
+                              : (votedName != null ? 'Change Accusation Vote' : 'Cast Accusation Vote'),
                         ),
                       ),
                     ],

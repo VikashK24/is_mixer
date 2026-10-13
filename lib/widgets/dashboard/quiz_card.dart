@@ -1,83 +1,18 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../../models/user_model.dart';
 import '../../services/json_storage_service.dart';
 
-class QuizCard extends StatefulWidget {
+/// Status panel shown to every player below their role card.
+///
+/// Healers answer the rescue quiz in the Healer card (multiple choice), so this
+/// card no longer contains an answer box and never writes answers itself.
+class QuizCard extends StatelessWidget {
   final User currentUser;
 
   const QuizCard({
     super.key,
     required this.currentUser,
   });
-
-  @override
-  State<QuizCard> createState() => _QuizCardState();
-}
-
-class _QuizCardState extends State<QuizCard> {
-  final TextEditingController _answerController = TextEditingController();
-  bool _isSubmitting = false;
-  String? _feedbackMessage;
-  bool _isCorrect = false;
-
-  @override
-  void dispose() {
-    _answerController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submitAnswer(String correctAnswer) async {
-    final answer = _answerController.text.trim();
-    if (answer.isEmpty) {
-      setState(() {
-        _feedbackMessage = 'Please enter an answer before submitting.';
-        _isCorrect = false;
-      });
-      return;
-    }
-
-    setState(() {
-      _isSubmitting = true;
-      _feedbackMessage = null;
-    });
-
-    try {
-      final bool isMatch = answer.toLowerCase() == correctAnswer.toLowerCase();
-
-      await FirebaseFirestore.instance
-          .collection('game_state')
-          .doc('current')
-          .collection('healer_answers')
-          .doc(widget.currentUser.id)
-          .set({
-        'healerId': widget.currentUser.id,
-        'healerName': widget.currentUser.username,
-        'submittedAnswer': answer,
-        'isCorrect': isMatch,
-        'timestamp': FieldValue.serverTimestamp(),
-      });
-
-      setState(() {
-        _feedbackMessage = isMatch
-            ? 'Answer recorded in Firebase! ALL active Healers must answer correctly to save the target.'
-            : 'Incorrect answer submitted to Firebase.';
-        _isCorrect = isMatch;
-        _answerController.clear();
-      });
-    } catch (e) {
-      setState(() {
-        _feedbackMessage = 'Failed to submit answer to Firebase: $e';
-        _isCorrect = false;
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSubmitting = false;
-        });
-      }
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,27 +23,7 @@ class _QuizCardState extends State<QuizCard> {
         final bool isNight = gameState['isNight'] ?? false;
         final String announcement = gameState['announcement'] ?? '';
 
-        final rawQuestion = gameState['activeQuestion'];
-        String activeQuestionText = '';
-        String correctAnswer = '';
-
-        if (rawQuestion is Map) {
-          activeQuestionText = rawQuestion['question']?.toString() ??
-              rawQuestion['text']?.toString() ??
-              rawQuestion['title']?.toString() ??
-              '';
-          correctAnswer = rawQuestion['correctAnswer']?.toString() ??
-              rawQuestion['answer']?.toString() ??
-              '';
-        } else if (rawQuestion is String) {
-          activeQuestionText = rawQuestion;
-        }
-
-        if (activeQuestionText.isEmpty) {
-          activeQuestionText = 'Waiting for the Moderator/Killer to transmit the Healer quiz challenge...';
-        }
-
-        if (!widget.currentUser.isAlive) {
+        if (!currentUser.isAlive) {
           return Card(
             color: Colors.grey.shade200,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -120,7 +35,7 @@ class _QuizCardState extends State<QuizCard> {
                   SizedBox(width: 16),
                   Expanded(
                     child: Text(
-                      'You have been eliminated. You can observe the game, but cannot answer quiz questions.',
+                      'You have been eliminated. You can observe the game, but cannot take any more actions.',
                       style: TextStyle(
                         color: Colors.grey,
                         fontWeight: FontWeight.bold,
@@ -133,38 +48,40 @@ class _QuizCardState extends State<QuizCard> {
           );
         }
 
-        final isHealer = widget.currentUser.identity.toLowerCase() == 'healer';
+        final isHealer = currentUser.identity.toLowerCase() == 'healer';
 
         return Column(
           children: [
-            Card(
-              color: isNight ? Colors.indigo.shade900 : Colors.amber.shade100,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    Icon(
-                      isNight ? Icons.nights_stay : Icons.wb_sunny,
-                      color: isNight ? Colors.amber : Colors.orange.shade900,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        announcement,
-                        style: TextStyle(
-                          color: isNight ? Colors.white : Colors.black87,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
+            if (announcement.isNotEmpty)
+              Card(
+                color: isNight ? Colors.indigo.shade900 : Colors.amber.shade100,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isNight ? Icons.nights_stay : Icons.wb_sunny,
+                        color: isNight ? Colors.amber : Colors.orange.shade900,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          announcement,
+                          style: TextStyle(
+                            color: isNight ? Colors.white : Colors.black87,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
             const SizedBox(height: 8),
 
+            // Healers use their own card; everyone else gets this notice.
             if (!isHealer)
               Card(
                 elevation: 2,
@@ -181,175 +98,13 @@ class _QuizCardState extends State<QuizCard> {
                       const SizedBox(width: 16),
                       const Expanded(
                         child: Text(
-                          'Quiz challenges are currently reserved exclusively for Healers to save targeted players.',
+                          'Quiz challenges are reserved exclusively for Healers to save targeted players.',
                           style: TextStyle(
                             color: Colors.indigo,
                             fontWeight: FontWeight.w600,
                             fontSize: 14,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              Card(
-                elevation: 3,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          CircleAvatar(
-                            backgroundColor: Colors.teal.shade100,
-                            child: Icon(Icons.health_and_safety, color: Colors.teal.shade800),
-                          ),
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Text(
-                              'Healer Rescue Challenge',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.red.shade100,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Text(
-                              'UNANIMOUS REQ',
-                              style: TextStyle(
-                                color: Colors.red,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 24),
-
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.amber.shade300),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.shield, color: Colors.amber, size: 20),
-                            SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Strict Requirement: EVERY active Healer must submit the correct answer within 30s to save the target!',
-                                style: TextStyle(
-                                  color: Colors.amber,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.indigo.shade50,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.indigo.shade100),
-                        ),
-                        child: Text(
-                          activeQuestionText,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.indigo,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      TextField(
-                        controller: _answerController,
-                        enabled: !_isSubmitting,
-                        decoration: const InputDecoration(
-                          labelText: 'Your Answer',
-                          hintText: 'Type your answer here...',
-                          prefixIcon: Icon(Icons.edit_note),
-                          border: OutlineInputBorder(),
-                        ),
-                        onSubmitted: (val) => _submitAnswer(correctAnswer),
-                      ),
-
-                      if (_feedbackMessage != null) ...[
-                        const SizedBox(height: 12),
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 300),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: _isCorrect ? Colors.green.shade50 : Colors.red.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: _isCorrect ? Colors.green.shade300 : Colors.red.shade300,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                _isCorrect ? Icons.check_circle_outline : Icons.error_outline,
-                                color: _isCorrect ? Colors.green.shade800 : Colors.red.shade800,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(
-                                  _feedbackMessage!,
-                                  style: TextStyle(
-                                    color: _isCorrect ? Colors.green.shade900 : Colors.red.shade900,
-                                    fontWeight: FontWeight.w500,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: _isSubmitting ? null : () => _submitAnswer(correctAnswer),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.teal.shade800,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        icon: _isSubmitting
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.shield),
-                        label: Text(_isSubmitting ? 'Submitting...' : 'Submit Rescue Answer'),
                       ),
                     ],
                   ),

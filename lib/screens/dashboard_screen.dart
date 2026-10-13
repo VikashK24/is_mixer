@@ -191,8 +191,9 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
               stream: JsonStorageService.streamAllUsers(),
               builder: (context, snapshot) {
                 final allUsers = snapshot.data ?? [];
-                final moderatorList = allUsers
-                    .where((u) => u.role == 'moderator')
+                // Moderators + God (super admin) accounts for the staff card
+                final staffList = allUsers
+                    .where((u) => u.role == 'moderator' || u.role == 'superadmin')
                     .toList();
                 final playerList = allUsers
                     .where((u) => u.role == 'mafia')
@@ -242,6 +243,19 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
                               RoleActionCard(currentUser: currentUser),
                             ],
 
+                            // Day trial vote for the other roles (villagers already
+                            // have it as their role card). Appears only while open.
+                            if (identity == 'killer' ||
+                                identity == 'healer' ||
+                                identity == 'detective') ...[
+                              const SizedBox(height: 20),
+                              VillagerActionCard(
+                                currentUser: currentUser,
+                                players: playerList,
+                                hideWhenClosed: true,
+                              ),
+                            ],
+
                             const SizedBox(height: 20),
                             QuizCard(currentUser: currentUser),
                             const SizedBox(height: 20),
@@ -262,8 +276,8 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
 
                           // SUPER ADMIN EXCLUSIVE MANAGEMENTS
                           if (isSuperAdmin) ...[
-                            ApprovalQueueCardPreview(
-                              moderatorList: moderatorList,
+                            ModeratorManagementCard(
+                              staffList: staffList,
                             ),
                             const SizedBox(height: 16),
                             SuperAdminDangerZoneCard(
