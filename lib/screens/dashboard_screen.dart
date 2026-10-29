@@ -6,7 +6,9 @@ import 'package:web/web.dart' as web;
 
 import '../models/user_model.dart';
 import '../services/json_storage_service.dart';
+import '../services/sound_alert_service.dart';
 
+import '../widgets/dashboard/elimination_alert_card.dart';
 import '../widgets/dashboard/game_moderator_controls.dart';
 import '../widgets/dashboard/identity_allocation_card.dart';
 import '../widgets/dashboard/navigatable_management_cards.dart';
@@ -82,6 +84,7 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
 
     if (widget.user.role == 'mafia') {
       _enableIntegrityGuard();
+      SoundAlertService.primeOnFirstTap();
     }
   }
 
@@ -219,6 +222,10 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
 
                           // PLAYER EXCLUSIVE DASHBOARD PANELS
                           if (isPlayer) ...[
+                            // Says "<username> eliminated!" on this device if the
+                            // current player is eliminated.
+                            EliminationAlertCard(currentUser: currentUser),
+                            const SizedBox(height: 16),
                             const PhaseBanner(),
                             const SizedBox(height: 20),
 
