@@ -7,6 +7,8 @@ import 'package:web/web.dart' as web;
 import '../models/user_model.dart';
 import '../services/json_storage_service.dart';
 import '../services/sound_alert_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/site_nav_bar.dart';
 
 import '../widgets/dashboard/elimination_alert_card.dart';
 import '../widgets/dashboard/game_moderator_controls.dart';
@@ -157,21 +159,18 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
     return PopScope(
       canPop: false,
       child: Scaffold(
-        appBar: AppBar(
-          title: Text('Mafia Quiz Game - (${widget.user.role.toUpperCase()})'),
-          automaticallyImplyLeading: false,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.logout),
-              tooltip: 'Logout',
-              onPressed: () async {
-                await JsonStorageService.clearSession();
-                widget.onLogout();
-              },
-            ),
-          ],
+        appBar: SiteNavBar(
+          current: NavTarget.home,
+          roleLabel: isSuperAdmin
+              ? 'GOD'
+              : (isModerator ? 'MODERATOR' : 'PLAYER'),
+          onLogout: () async {
+            await JsonStorageService.clearSession();
+            widget.onLogout();
+          },
         ),
-        body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        body: NoirBackground(
+          child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: FirebaseFirestore.instance
               .collection('game_state')
               .doc('question_bank')
@@ -306,6 +305,7 @@ class _GameDashboardScreenState extends State<GameDashboardScreen> {
               },
             );
           },
+        ),
         ),
       ),
     );
