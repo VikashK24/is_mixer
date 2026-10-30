@@ -6,11 +6,13 @@ import 'models/user_model.dart';
 import 'services/json_storage_service.dart';
 import 'screens/auth_screen.dart';
 import 'screens/dashboard_screen.dart';
+import 'theme/app_theme.dart';
+import 'widgets/mafia_logo.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   usePathUrlStrategy();
-  
+
   // Initialize Firebase Cloud Service
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
@@ -25,12 +27,9 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Information Sciences Mixer 2026',
+      title: 'Mafia Quiz | Information Sciences Mixer 2026',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
+      theme: buildNoirTheme(),
       home: const RootSessionWrapper(),
     );
   }
@@ -55,6 +54,7 @@ class _RootSessionWrapperState extends State<RootSessionWrapper> {
 
   Future<void> _checkExistingSession() async {
     final user = await JsonStorageService.getActiveSessionUser();
+    if (!mounted) return;
     setState(() {
       _currentUser = user;
       _isLoading = false;
@@ -65,7 +65,25 @@ class _RootSessionWrapperState extends State<RootSessionWrapper> {
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: NoirBackground(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FedoraLogo(size: 72, color: NoirColors.gold),
+                SizedBox(height: 24),
+                SizedBox(
+                  width: 26,
+                  height: 26,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: NoirColors.gold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
